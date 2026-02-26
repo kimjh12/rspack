@@ -6,11 +6,12 @@ use rspack_collections::{
   Identifiable, IdentifierDashMap, IdentifierIndexSet, IdentifierMap, IdentifierSet,
 };
 use rspack_core::{
-  BoxDependency, BoxModule, Compilation, CompilationOptimizeChunkModules, DependencyId,
-  DependencyType, ExportProvided, ExportsInfoArtifact, ExtendedReferencedExport, GetTargetResult,
-  ImportedByDeferModulesArtifact, LibIdentOptions, Logger, ModuleGraph, ModuleGraphCacheArtifact,
-  ModuleGraphConnection, ModuleGraphModule, ModuleIdentifier, Plugin, PrefetchExportsInfoMode,
-  ProvidedExports, RuntimeCondition, RuntimeSpec, SourceType,
+  BoxDependency, BoxModule, ChunkByUkey, ChunkGraph, ChunkGroupByUkey, ChunkGroupUkey, ChunkUkey,
+  Compilation, CompilationOptimizeChunkModules, DependencyId, DependencyType, ExportProvided,
+  ExportsInfoArtifact, ExtendedReferencedExport, GetTargetResult, ImportedByDeferModulesArtifact,
+  LibIdentOptions, Logger, ModuleGraph, ModuleGraphCacheArtifact, ModuleGraphConnection,
+  ModuleGraphModule, ModuleIdentifier, Plugin, PrefetchExportsInfoMode, ProvidedExports,
+  RuntimeCondition, RuntimeSpec, SourceType,
   concatenated_module::{
     ConcatenatedInnerModule, ConcatenatedModule, RootModuleContext, is_esm_dep_like,
   },
@@ -37,6 +38,7 @@ pub struct ConcatConfiguration {
   pub root_module: ModuleIdentifier,
   runtime: Option<RuntimeSpec>,
   modules: IdentifierIndexSet,
+  cross_chunk_modules: IdentifierSet,
   warnings: IdentifierMap<Warning>,
 }
 
@@ -50,11 +52,25 @@ impl ConcatConfiguration {
       runtime,
       modules,
       warnings: IdentifierMap::default(),
+      cross_chunk_modules: IdentifierSet::default(),
     }
   }
 
   fn add(&mut self, module: ModuleIdentifier) {
     self.modules.insert(module);
+  }
+
+  fn add_cross_chunk(&mut self, module: ModuleIdentifier) {
+    self.modules.insert(module);
+    self.cross_chunk_modules.insert(module);
+  }
+
+  fn is_cross_chunk(&self, module: &ModuleIdentifier) -> bool {
+    self.cross_chunk_modules.contains(module)
+  }
+
+  fn get_cross_chunk_modules(&self) -> &IdentifierSet {
+    &self.cross_chunk_modules
   }
 
   fn has(&self, module: &ModuleIdentifier) -> bool {
@@ -87,7 +103,9 @@ impl ConcatConfiguration {
     let modules = &mut self.modules;
     let len = modules.len();
     for _ in snapshot..len {
-      modules.pop();
+      if let Some(removed) = modules.pop() {
+        self.cross_chunk_modules.remove(&removed);
+      }
     }
   }
 }
@@ -228,6 +246,94 @@ impl ModuleConcatenationPlugin {
     set
   }
 
+  /// Check if a module is available in a chunk through ancestor chunk groups.
+  /// A module is "available" if it exists in any chunk belonging to a parent
+  /// (or further ancestor) chunk group, meaning it will be loaded before the
+  /// given chunk at runtime.
+  fn is_module_available_for_chunk(
+    chunk_graph: &ChunkGraph,
+    chunk_group_by_ukey: &ChunkGroupByUkey,
+    chunk_by_ukey: &ChunkByUkey,
+    module_id: &ModuleIdentifier,
+    chunk_ukey: &ChunkUkey,
+  ) -> bool {
+    let chunk = chunk_by_ukey.expect_get(chunk_ukey);
+    let mut visited = HashSet::<ChunkGroupUkey>::default();
+    let mut queue = VecDeque::new();
+
+    for group_ukey in chunk.groups() {
+      for parent_ukey in chunk_group_by_ukey
+        .expect_get(group_ukey)
+        .parents_iterable()
+      {
+        if visited.insert(*parent_ukey) {
+          queue.push_back(*parent_ukey);
+        }
+      }
+    }
+
+    while let Some(group_ukey) = queue.pop_front() {
+      let group = chunk_group_by_ukey.expect_get(&group_ukey);
+      for parent_chunk_ukey in group.chunks.iter() {
+        if chunk_graph.is_module_in_chunk(module_id, *parent_chunk_ukey) {
+          return true;
+        }
+      }
+      for parent_ukey in group.parents_iterable() {
+        if visited.insert(*parent_ukey) {
+          queue.push_back(*parent_ukey);
+        }
+      }
+    }
+
+    false
+  }
+
+  /// Check if inlining a cross-chunk module would create a circular dependency
+  /// with modules already in the concatenation config. Cross-chunk modules that
+  /// import back into the config can cause TDZ (temporal dead zone) errors.
+  fn has_cross_chunk_cycle(
+    module_id: &ModuleIdentifier,
+    config: &ConcatConfiguration,
+    module_cache: &HashMap<ModuleIdentifier, NoRuntimeModuleCache>,
+  ) -> bool {
+    if let Some(cache) = module_cache.get(module_id) {
+      for (con, _) in &cache.connections {
+        if config.has(con.module_identifier()) {
+          return true;
+        }
+      }
+    }
+    false
+  }
+
+  /// Check if a cross-chunk module has importers that reside in the same
+  /// physical chunk(s) as the module itself. Such importers would continue
+  /// to reference the original module instance while the concatenation uses
+  /// an inlined copy, which causes mutable-state divergence for modules
+  /// with `let`/`var` exports.
+  fn has_co_located_importers(
+    chunk_graph: &ChunkGraph,
+    module_id: &ModuleIdentifier,
+    config: &ConcatConfiguration,
+    module_cache: &HashMap<ModuleIdentifier, NoRuntimeModuleCache>,
+  ) -> bool {
+    let module_chunks = chunk_graph.get_module_chunks(*module_id);
+    if let Some(cache) = module_cache.get(module_id) {
+      for origin_module in cache.incomings.keys().flatten() {
+        if config.has(origin_module) {
+          continue;
+        }
+        for chunk in module_chunks.iter() {
+          if chunk_graph.is_module_in_chunk(origin_module, *chunk) {
+            return true;
+          }
+        }
+      }
+    }
+    false
+  }
+
   #[allow(clippy::too_many_arguments)]
   fn try_to_add(
     compilation: &Compilation,
@@ -292,6 +398,73 @@ impl ModuleConcatenationPlugin {
         .collect();
 
       if !missing_chunks.is_empty() {
+        let chunk_group_by_ukey = &compilation.build_chunk_graph_artifact.chunk_group_by_ukey;
+        let all_available_via_ancestors = missing_chunks.iter().all(|chunk_ukey| {
+          Self::is_module_available_for_chunk(
+            chunk_graph,
+            chunk_group_by_ukey,
+            chunk_by_ukey,
+            module_id,
+            chunk_ukey,
+          )
+        });
+
+        if all_available_via_ancestors {
+          // Safety: don't inline across runtimes — the module may have
+          // runtime-dependent tree-shaking (e.g. __webpack_exports_info__).
+          if let Some(rt) = runtime
+            && rt.len() > 1
+          {
+            let problem = Warning::Problem(format!(
+              "Module {module_readable_identifier} is in a parent chunk but the concatenation spans multiple runtimes"
+            ));
+            statistics.incorrect_chunks += 1;
+            failure_cache.insert(*module_id, problem.clone());
+            return Some(problem);
+          }
+
+          // Safety: don't inline if the module has importers in its own
+          // chunk that are outside this config — duplicating the module
+          // would cause mutable-state divergence.
+          if Self::has_co_located_importers(chunk_graph, module_id, config, module_cache) {
+            let problem = Warning::Problem(format!(
+              "Module {module_readable_identifier} is in a parent chunk but has co-located importers that could cause state divergence"
+            ));
+            statistics.incorrect_chunks += 1;
+            failure_cache.insert(*module_id, problem.clone());
+            return Some(problem);
+          }
+
+          // Safety: don't inline if there's a circular dependency with
+          // modules already in the concatenation — this risks TDZ errors.
+          if Self::has_cross_chunk_cycle(module_id, config, module_cache) {
+            let problem = Warning::Problem(format!(
+              "Module {module_readable_identifier} is in a parent chunk but has circular dependencies with the concatenation root"
+            ));
+            statistics.incorrect_chunks += 1;
+            failure_cache.insert(*module_id, problem.clone());
+            return Some(problem);
+          }
+
+          // Cross-chunk fast path: the original module remains in its parent
+          // chunk for other consumers, so we skip importer checks and just
+          // inline a copy into this concatenation.
+          config.add_cross_chunk(*module_id);
+          for imp in Self::get_imports(
+            module_graph,
+            module_graph_cache,
+            &compilation.exports_info_artifact,
+            *module_id,
+            runtime,
+            imports_cache,
+            module_cache,
+          ) {
+            candidates.insert(imp);
+          }
+          statistics.added += 1;
+          return None;
+        }
+
         let problem_string = {
           let mut missing_chunks_list = missing_chunks
             .iter()
@@ -1250,7 +1423,7 @@ impl ModuleConcatenationPlugin {
         let root_module = current_configuration.root_module;
 
         modules.iter().for_each(|module| {
-          if *module != root_module {
+          if *module != root_module && !current_configuration.is_cross_chunk(module) {
             used_as_inner.insert(*module);
           }
         });
@@ -1328,7 +1501,12 @@ impl ModuleConcatenationPlugin {
         continue;
       }
       let modules_set = config.get_modules();
-      used_modules.extend(modules_set.iter().copied());
+      used_modules.extend(
+        modules_set
+          .iter()
+          .filter(|m| !config.is_cross_chunk(m))
+          .copied(),
+      );
       batch.push(config);
     }
 
@@ -1337,12 +1515,14 @@ impl ModuleConcatenationPlugin {
         let s = unsafe { token.used(&*compilation) };
         s.spawn(move |compilation| async move {
           let modules_set = config.get_modules();
+          let cross_chunk = config.get_cross_chunk_modules();
           let new_module = create_concatenated_module(compilation, &config).await?;
           let new_module_id = new_module.identifier();
           let connections = prepare_concatenated_module_connections(
             compilation,
             &new_module_id,
             modules_set,
+            cross_chunk,
             |m, con, dep| {
               con.original_module_identifier.as_ref() == Some(m)
                 && !(is_esm_dep_like(dep) && modules_set.contains(con.module_identifier()))
@@ -1567,6 +1747,7 @@ fn prepare_concatenated_module_connections<F>(
   compilation: &Compilation,
   new_module: &ModuleIdentifier,
   modules_set: &IdentifierIndexSet,
+  cross_chunk_modules: &IdentifierSet,
   filter_connection: F,
 ) -> Vec<DependencyId>
 where
@@ -1575,7 +1756,7 @@ where
   let mg = compilation.get_module_graph();
   let mut res = vec![];
   for m in modules_set.iter() {
-    if m == new_module {
+    if m == new_module || cross_chunk_modules.contains(m) {
       continue;
     }
 
@@ -1669,7 +1850,7 @@ fn add_concatenated_module(
   let module_graph = compilation.get_module_graph_mut();
 
   for m in modules_set.iter() {
-    if *m == root_module_id {
+    if *m == root_module_id || config.is_cross_chunk(m) {
       continue;
     }
     let module = module_graph
