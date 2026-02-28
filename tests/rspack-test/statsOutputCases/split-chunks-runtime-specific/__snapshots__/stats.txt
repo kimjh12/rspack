@@ -25,13 +25,13 @@ no-used-exports:
   Entrypoint b xx KiB = no-used-exports-830.js xx bytes no-used-exports-b.js xx KiB
   Entrypoint c xx KiB = no-used-exports-830.js xx bytes no-used-exports-c.js xx KiB
   chunk (runtime: a) no-used-exports-a.js (a) xx bytes (javascript) xx KiB (runtime) [entry] [rendered]
-    ./a.js xx bytes [built] [code generated]
+    ./a.js + 1 modules xx bytes [code generated]
   chunk (runtime: b) no-used-exports-b.js (b) xx bytes (javascript) xx KiB (runtime) [entry] [rendered]
-    ./b.js xx bytes [built] [code generated]
+    ./b.js + 1 modules xx bytes [code generated]
   chunk (runtime: a, b, c) no-used-exports-830.js (id hint: ) xx bytes [initial] [rendered] split chunk (cache group: default)
     ./objects.js xx bytes [built] [code generated]
   chunk (runtime: c) no-used-exports-c.js (c) xx bytes (javascript) xx KiB (runtime) [entry] [rendered]
-    ./c.js xx bytes [built] [code generated]
+    ./c.js + 1 modules xx bytes [code generated]
   no-used-exports (Rspack x.x.x) compiled successfully in X s
 
 global:
@@ -43,11 +43,11 @@ global:
   Entrypoint b xx KiB = global-830.js xx bytes global-b.js xx KiB
   Entrypoint c xx KiB = global-830.js xx bytes global-c.js xx KiB
   chunk (runtime: a) global-a.js (a) xx bytes (javascript) xx KiB (runtime) [entry] [rendered]
-    ./a.js xx bytes [built] [code generated]
+    ./a.js + 1 modules xx bytes [code generated]
   chunk (runtime: b) global-b.js (b) xx bytes (javascript) xx KiB (runtime) [entry] [rendered]
-    ./b.js xx bytes [built] [code generated]
+    ./b.js + 1 modules xx bytes [code generated]
   chunk (runtime: a, b, c) global-830.js (id hint: ) xx bytes [initial] [rendered] split chunk (cache group: default)
     ./objects.js xx bytes [built] [code generated]
   chunk (runtime: c) global-c.js (c) xx bytes (javascript) xx KiB (runtime) [entry] [rendered]
-    ./c.js xx bytes [built] [code generated]
+    ./c.js + 1 modules xx bytes [code generated]
   global (Rspack x.x.x) compiled successfully in X s
