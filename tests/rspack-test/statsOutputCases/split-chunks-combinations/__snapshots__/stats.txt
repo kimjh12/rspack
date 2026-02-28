@@ -17,10 +17,10 @@ chunk (runtime: main) async-f.js (async-f) xx bytes <{889}> [rendered]
   ./f.js xx bytes [built] [code generated]
 chunk (runtime: main) async-b.js (async-b) xx bytes <{889}> ={919}= [rendered]
   > ./b ./index.js 2:1-48
-  ./b.js xx bytes [built] [code generated]
+  ./b.js + 1 modules xx bytes [code generated]
 chunk (runtime: main) async-a.js (async-a) xx bytes <{889}> ={919}= [rendered]
   > ./a ./index.js 1:1-48
-  ./a.js xx bytes [built] [code generated]
+  ./a.js + 1 modules xx bytes [code generated]
 chunk (runtime: main) async-c.js (async-c) xx bytes <{889}> [rendered]
   > ./c ./index.js 3:1-48
   dependent modules xx bytes [dependent] 1 module

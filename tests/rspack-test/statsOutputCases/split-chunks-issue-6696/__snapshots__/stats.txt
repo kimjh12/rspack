@@ -13,5 +13,5 @@ default:
     ./a.js xx bytes [built] [code generated]
   chunk (runtime: main) main.js (main) xx bytes (javascript) xx KiB (runtime) ={545}= >{701}< >{724}< [entry] [rendered]
     > ./ main
-    ./index.js xx bytes [built] [code generated]
+    ./index.js + 1 modules xx bytes [code generated]
   default (Rspack x.x.x) compiled successfully

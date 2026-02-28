@@ -4,7 +4,7 @@ default:
   Chunk Group c xx bytes = 773.js xx bytes c.js xx bytes
   chunk (runtime: a) a.js (a) xx bytes (javascript) xx KiB (runtime) ={773}= [entry] [rendered]
     > ./a a
-    ./a.js xx bytes [built] [code generated]
+    ./a.js + 1 modules xx bytes [code generated]
   chunk (runtime: b) b.js (b) xx bytes (javascript) xx KiB (runtime) >{773}< >{907}< [entry] [rendered]
     > ./b b
     ./b.js xx bytes [built] [code generated]
@@ -14,5 +14,5 @@ default:
     ./node_modules/x.js xx bytes [built] [code generated]
   chunk (runtime: b) c.js (c) xx bytes <{364}> ={773}= [rendered]
     > ./c ./b.js 1:1-42
-    ./c.js xx bytes [built] [code generated]
+    ./c.js + 1 modules xx bytes [code generated]
   default (Rspack x.x.x) compiled successfully

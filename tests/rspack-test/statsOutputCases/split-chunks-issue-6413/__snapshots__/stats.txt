@@ -4,7 +4,7 @@ default:
     > ./a ./index.js 1:1-48
     > ./b ./index.js 2:1-48
     > ./c ./index.js 3:1-48
-    ./common.js xx bytes [built] [code generated]
+    ./common.js + 1 modules xx bytes [code generated]
   chunk (runtime: main) async-b.js (async-b) xx bytes <{889}> ={501}= ={773}= [rendered]
     > ./b ./index.js 2:1-48
     ./b.js xx bytes [built] [code generated]
