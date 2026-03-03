@@ -755,35 +755,7 @@ impl ESMExportImportedSpecifierDependency {
         let environment = compilation.options.output.environment;
         let supports_arrow_function = environment.supports_arrow_function();
         let supports_const = environment.supports_const();
-
-        let mut content = format!(
-          r"
-/* reexport */ var __rspack_reexport = {{}};
-/* reexport */ for( {} __rspack_import_key in {import_var}) ",
-          if supports_const { "const" } else { "var" }
-        );
-
-        if ignored.len() > 1 {
-          content += &format!(
-            "if({}.indexOf(__rspack_import_key) < 0) ",
-            serde_json::to_string(&ignored).expect("should serialize to array")
-          );
-        } else if let Some(item) = ignored.iter().next() {
-          content += &format!(
-            "if(__rspack_import_key !== {}) ",
-            serde_json::to_string(item).expect("should serialize to string")
-          );
-        }
-        content += "__rspack_reexport[__rspack_import_key] =";
-
-        // Arrow getters capture the loop variable by reference.
-        // They are only correct when the loop binding is block-scoped (const/let), not var.
-        if supports_arrow_function && supports_const {
-          content += &format!("() => {import_var}[__rspack_import_key]");
-        } else {
-          content +=
-            &format!("function(key) {{ return {import_var}[key]; }}.bind(0, __rspack_import_key)");
-        }
+        let batch = environment.supports_batch_define_property_getters();
 
         runtime_requirements.insert(RuntimeGlobals::EXPORTS);
         runtime_requirements.insert(RuntimeGlobals::DEFINE_PROPERTY_GETTERS);
@@ -796,19 +768,68 @@ impl ESMExportImportedSpecifierDependency {
           &compilation.async_modules_artifact.borrow(),
           &module.identifier(),
         );
+
+        let define_property_getters = compilation
+          .runtime_template
+          .render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS);
+        let exports_arg = compilation
+          .runtime_template
+          .render_exports_argument(exports_name);
+
+        let mut content = String::new();
+        if batch {
+          content += &format!(
+            r"
+/* reexport */ var __rspack_reexport = {{}};
+/* reexport */ for( {} __rspack_import_key in {import_var}) ",
+            if supports_const { "const" } else { "var" }
+          );
+        } else {
+          content += &format!(
+            r"
+/* reexport */ for( {} __rspack_import_key in {import_var}) ",
+            if supports_const { "const" } else { "var" }
+          );
+        }
+
+        if ignored.len() > 1 {
+          content += &format!(
+            "if({}.indexOf(__rspack_import_key) < 0) ",
+            serde_json::to_string(&ignored).expect("should serialize to array")
+          );
+        } else if let Some(item) = ignored.iter().next() {
+          content += &format!(
+            "if(__rspack_import_key !== {}) ",
+            serde_json::to_string(item).expect("should serialize to string")
+          );
+        }
+
+        if batch {
+          content += "__rspack_reexport[__rspack_import_key] =";
+        }
+
+        // Arrow getters capture the loop variable by reference.
+        // They are only correct when the loop binding is block-scoped (const/let), not var.
+        let getter = if supports_arrow_function && supports_const {
+          format!("() => {import_var}[__rspack_import_key]")
+        } else {
+          format!("function(key) {{ return {import_var}[key]; }}.bind(0, __rspack_import_key)")
+        };
+
+        if batch {
+          content += &getter;
+          content += &format!(
+            "\n/* reexport */ {define_property_getters}({exports_arg}, __rspack_reexport);\n"
+          );
+        } else {
+          content += &format!(
+            "{define_property_getters}({exports_arg}, __rspack_import_key, {getter});\n"
+          );
+        }
+
         ctxt.init_fragments.push(
           NormalInitFragment::new(
-            format!(
-              r#"{content}
-/* reexport */ {}({}, __rspack_reexport);
-"#,
-              compilation
-                .runtime_template
-                .render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
-              compilation
-                .runtime_template
-                .render_exports_argument(exports_name),
-            ),
+            content,
             if is_async {
               InitFragmentStage::StageAsyncESMImports
             } else {
@@ -961,22 +982,46 @@ impl ESMExportImportedSpecifierDependency {
     runtime_requirements.insert(RuntimeGlobals::EXPORTS);
     runtime_requirements.insert(RuntimeGlobals::DEFINE_PROPERTY_GETTERS);
     runtime_requirements.insert(RuntimeGlobals::HAS_OWN_PROPERTY);
-    format!(
-      "if({}({}, {})) {}({}, {{ {}: function() {{ return {}; }} }});\n",
-      compilation
-        .runtime_template
-        .render_runtime_globals(&RuntimeGlobals::HAS_OWN_PROPERTY),
-      name,
-      serde_json::to_string(&first_value_key.to_string()).expect("should serialize to string"),
-      compilation
-        .runtime_template
-        .render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
-      compilation
-        .runtime_template
-        .render_exports_argument(exports_name),
-      property_name(&key).expect("should have property_name"),
-      return_value
-    )
+    let batch = compilation
+      .options
+      .output
+      .environment
+      .supports_batch_define_property_getters();
+    if batch {
+      format!(
+        "if({}({}, {})) {}({}, {{ {}: function() {{ return {}; }} }});\n",
+        compilation
+          .runtime_template
+          .render_runtime_globals(&RuntimeGlobals::HAS_OWN_PROPERTY),
+        name,
+        serde_json::to_string(&first_value_key.to_string()).expect("should serialize to string"),
+        compilation
+          .runtime_template
+          .render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
+        compilation
+          .runtime_template
+          .render_exports_argument(exports_name),
+        property_name(&key).expect("should have property_name"),
+        return_value
+      )
+    } else {
+      format!(
+        "if({}({}, {})) {}({}, {}, function() {{ return {}; }});\n",
+        compilation
+          .runtime_template
+          .render_runtime_globals(&RuntimeGlobals::HAS_OWN_PROPERTY),
+        name,
+        serde_json::to_string(&first_value_key.to_string()).expect("should serialize to string"),
+        compilation
+          .runtime_template
+          .render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
+        compilation
+          .runtime_template
+          .render_exports_argument(exports_name),
+        serde_json::to_string(&key.to_string()).expect("should serialize to string"),
+        return_value
+      )
+    }
   }
 
   pub fn create_export_presence_mode(options: &JavascriptParserOptions) -> ExportPresenceMode {
