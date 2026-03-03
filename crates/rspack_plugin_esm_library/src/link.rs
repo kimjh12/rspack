@@ -300,7 +300,7 @@ impl EsmLibraryPlugin {
             continue;
           }
 
-          let mut ns_obj = Vec::new();
+          let mut ns_obj: Vec<(Atom, String)> = Vec::new();
           for export_info in module_graph
             .get_exports_info_data(module_info_id)
             .exports()
@@ -342,26 +342,51 @@ impl EsmLibraryPlugin {
                 chunk_link.imports.entry(symbol_binding.module).or_default();
               }
 
-              ns_obj.push(format!(
-                "\n  {}: {}",
-                property_name(&used_name).expect("should have property_name"),
-                compilation
-                  .runtime_template
-                  .returning_function(&binding.render(), "")
-              ));
+              ns_obj.push((used_name, binding.render().to_string()));
             }
           }
           // https://github.com/webpack/webpack/blob/ac7e531436b0d47cd88451f497cdfd0dad41535d/lib/optimize/ConcatenatedModule.js#L1539
           let name = namespace_name.expect("should have name_space_name");
           let define_getters = if !ns_obj.is_empty() {
-            format!(
-              "{}({}, {{ {} }});\n",
-              compilation
-                .runtime_template
-                .render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
-              name,
-              ns_obj.join(",")
-            )
+            let dg = compilation
+              .runtime_template
+              .render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS);
+            if compilation
+              .runtime_template
+              .supports_batch_define_property_getters()
+            {
+              let props: Vec<String> = ns_obj
+                .iter()
+                .map(|(used_name, getter_name)| {
+                  format!(
+                    "\n  {}: {}",
+                    property_name(used_name).expect("should have property_name"),
+                    compilation
+                      .runtime_template
+                      .returning_function(getter_name, "")
+                  )
+                })
+                .collect();
+              format!("{}({}, {{ {} }});\n", dg, name, props.join(","))
+            } else {
+              ns_obj
+                .iter()
+                .map(|(used_name, getter_name)| {
+                  let quoted =
+                    serde_json::to_string(used_name.as_ref()).expect("should serialize name");
+                  format!(
+                    "{}({}, {}, {});\n",
+                    dg,
+                    name,
+                    quoted,
+                    compilation
+                      .runtime_template
+                      .returning_function(getter_name, "")
+                  )
+                })
+                .collect::<Vec<_>>()
+                .join("")
+            }
           } else {
             String::new()
           };

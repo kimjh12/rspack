@@ -367,36 +367,56 @@ impl<C: InitFragmentRenderContext> InitFragment<C> for ESMExportInitFragment {
     context.add_runtime_requirements(RuntimeGlobals::EXPORTS);
     context.add_runtime_requirements(RuntimeGlobals::DEFINE_PROPERTY_GETTERS);
     self.export_map.sort_by(|a, b| a.0.cmp(&b.0));
-    let exports = format!(
-      "{{\n  {}\n}}",
+
+    let batch = context
+      .runtime_template()
+      .supports_batch_define_property_getters();
+
+    let define_getters = context
+      .runtime_template()
+      .render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS);
+    let exports_arg = context
+      .runtime_template()
+      .render_exports_argument(self.exports_argument);
+
+    let start = if batch {
+      let exports = format!(
+        "{{\n  {}\n}}",
+        self
+          .export_map
+          .iter()
+          .map(|s| {
+            let prop = property_name(&s.0)?;
+            Ok(format!(
+              "{}: {}",
+              prop,
+              context.runtime_template().returning_function(&s.1, "")
+            ))
+          })
+          .collect::<Result<Vec<_>>>()?
+          .join(",\n  ")
+      );
+      format!("{}({}, {});\n", define_getters, exports_arg, exports)
+    } else {
       self
         .export_map
         .iter()
         .map(|s| {
-          let prop = property_name(&s.0)?;
+          let name =
+            serde_json::to_string(s.0.as_ref()).map_err(|e| rspack_error::error!("{e}"))?;
           Ok(format!(
-            "{}: {}",
-            prop,
+            "{}({}, {}, {});\n",
+            define_getters,
+            exports_arg,
+            name,
             context.runtime_template().returning_function(&s.1, "")
           ))
         })
         .collect::<Result<Vec<_>>>()?
-        .join(",\n  ")
-    );
+        .join("")
+    };
 
-    Ok(InitFragmentContents {
-      start: format!(
-        "{}({}, {});\n",
-        context
-          .runtime_template()
-          .render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
-        context
-          .runtime_template()
-          .render_exports_argument(self.exports_argument),
-        exports
-      ),
-      end: None,
-    })
+    Ok(InitFragmentContents { start, end: None })
   }
 
   fn stage(&self) -> InitFragmentStage {

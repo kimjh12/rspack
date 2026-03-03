@@ -201,36 +201,44 @@ impl Module for ContainerEntryModule {
       &mut code_generation_result.runtime_requirements,
     );
     let module_map_str = module_map.render(compilation);
+    let batch = compilation
+      .runtime_template
+      .supports_batch_define_property_getters();
+    let dg = compilation
+      .runtime_template
+      .render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS);
     let source = if self.enhanced {
-      format!(
-        r#"
-{}(exports, {{
-	get: {},
-	init: {}
-}});"#,
-        compilation
-          .runtime_template
-          .render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
-        compilation.runtime_template.returning_function(
-          &format!(
-            "{}.getContainer",
-            compilation
-              .runtime_template
-              .render_runtime_globals(&RuntimeGlobals::REQUIRE)
-          ),
-          ""
+      let get_fn = compilation.runtime_template.returning_function(
+        &format!(
+          "{}.getContainer",
+          compilation
+            .runtime_template
+            .render_runtime_globals(&RuntimeGlobals::REQUIRE)
         ),
-        compilation.runtime_template.returning_function(
-          &format!(
-            "{}.initContainer",
-            compilation
-              .runtime_template
-              .render_runtime_globals(&RuntimeGlobals::REQUIRE)
-          ),
-          ""
+        "",
+      );
+      let init_fn = compilation.runtime_template.returning_function(
+        &format!(
+          "{}.initContainer",
+          compilation
+            .runtime_template
+            .render_runtime_globals(&RuntimeGlobals::REQUIRE)
         ),
-      )
+        "",
+      );
+      if batch {
+        format!("\n{dg}(exports, {{\n\tget: {get_fn},\n\tinit: {init_fn}\n}});",)
+      } else {
+        format!("\n{dg}(exports, \"get\", {get_fn});\n{dg}(exports, \"init\", {init_fn});",)
+      }
     } else {
+      let export_get = compilation.runtime_template.returning_function("get", "");
+      let export_init = compilation.runtime_template.returning_function("init", "");
+      let define_exports = if batch {
+        format!("{dg}(exports, {{\n\tget: {export_get},\n\tinit: {export_init}\n}});",)
+      } else {
+        format!("{dg}(exports, \"get\", {export_get});\n{dg}(exports, \"init\", {export_init});",)
+      };
       format!(
         r#"
 var moduleMap = {module_map_str};
@@ -252,10 +260,7 @@ var init = function(shareScope, initScope) {{
   {share_scope_map}[name] = shareScope;
   return {initialize_sharing}(name, initScope);
 }}
-{define_property_getters}(exports, {{
-	get: {export_get},
-	init: {export_init}
-}});"#,
+{define_exports}"#,
         current_remote_get_scope = compilation
           .runtime_template
           .render_runtime_globals(&RuntimeGlobals::CURRENT_REMOTE_GET_SCOPE),
@@ -269,15 +274,10 @@ var init = function(shareScope, initScope) {{
         initialize_sharing = compilation
           .runtime_template
           .render_runtime_globals(&RuntimeGlobals::INITIALIZE_SHARING),
-        define_property_getters = compilation
-          .runtime_template
-          .render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
         get_scope_reject = compilation.runtime_template.basic_function(
           "",
           r#"throw new Error('Module "' + module + '" does not exist in container.');"#
         ),
-        export_get = compilation.runtime_template.returning_function("get", ""),
-        export_init = compilation.runtime_template.returning_function("init", ""),
       )
     };
     code_generation_result =

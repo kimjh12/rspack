@@ -5,14 +5,18 @@ use rspack_core::{Compilation, RuntimeModule, RuntimeTemplate, impl_runtime_modu
 #[derive(Debug)]
 pub struct CreateFakeNamespaceObjectRuntimeModule {
   id: Identifier,
+  batch: bool,
 }
 
 impl CreateFakeNamespaceObjectRuntimeModule {
-  pub fn new(runtime_template: &RuntimeTemplate) -> Self {
-    Self::with_default(Identifier::from(format!(
-      "{}create_fake_namespace_object",
-      runtime_template.runtime_module_prefix()
-    )))
+  pub fn new(runtime_template: &RuntimeTemplate, batch: bool) -> Self {
+    Self::with_default(
+      Identifier::from(format!(
+        "{}create_fake_namespace_object",
+        runtime_template.runtime_module_prefix()
+      )),
+      batch,
+    )
   }
 }
 
@@ -25,7 +29,11 @@ impl RuntimeModule for CreateFakeNamespaceObjectRuntimeModule {
   fn template(&self) -> Vec<(String, String)> {
     vec![(
       self.id.to_string(),
-      include_str!("runtime/create_fake_namespace_object.ejs").to_string(),
+      if self.batch {
+        include_str!("runtime/create_fake_namespace_object.ejs").to_string()
+      } else {
+        include_str!("runtime/create_fake_namespace_object_per_export.ejs").to_string()
+      },
     )]
   }
 

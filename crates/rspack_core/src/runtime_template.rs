@@ -1174,6 +1174,14 @@ return {}
     )
   }
 
+  pub fn supports_batch_define_property_getters(&self) -> bool {
+    self
+      .compiler_options
+      .output
+      .environment
+      .supports_batch_define_property_getters()
+  }
+
   pub fn render_exports_argument(&self, exports_argument: ExportsArgument) -> String {
     match exports_argument {
       ExportsArgument::Exports => "exports".to_string(),

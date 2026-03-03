@@ -676,6 +676,7 @@ const applyOutputDefaults = (
     'nodePrefixForCoreModules',
     () => tp && optimistic(tp.nodePrefixForCoreModules),
   );
+  F(environment, 'batchDefinePropertyGetters', () => true);
   F(
     environment,
     'importMetaDirnameAndFilename',

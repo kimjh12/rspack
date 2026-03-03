@@ -5,14 +5,18 @@ use rspack_core::{Compilation, RuntimeModule, RuntimeTemplate, impl_runtime_modu
 #[derive(Debug)]
 pub struct DefinePropertyGettersRuntimeModule {
   id: Identifier,
+  batch: bool,
 }
 
 impl DefinePropertyGettersRuntimeModule {
-  pub fn new(runtime_template: &RuntimeTemplate) -> Self {
-    Self::with_default(Identifier::from(format!(
-      "{}define_property_getters",
-      runtime_template.runtime_module_prefix()
-    )))
+  pub fn new(runtime_template: &RuntimeTemplate, batch: bool) -> Self {
+    Self::with_default(
+      Identifier::from(format!(
+        "{}define_property_getters",
+        runtime_template.runtime_module_prefix()
+      )),
+      batch,
+    )
   }
 }
 
@@ -25,7 +29,11 @@ impl RuntimeModule for DefinePropertyGettersRuntimeModule {
   fn template(&self) -> Vec<(String, String)> {
     vec![(
       self.id.to_string(),
-      include_str!("runtime/define_property_getters.ejs").to_string(),
+      if self.batch {
+        include_str!("runtime/define_property_getters.ejs").to_string()
+      } else {
+        include_str!("runtime/define_property_getters_per_export.ejs").to_string()
+      },
     )]
   }
 

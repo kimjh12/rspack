@@ -441,6 +441,16 @@ export type Environment = {
 
   /** The environment supports template literals. */
   templateLiteral?: boolean;
+
+  /**
+   * Use batched object-style `__webpack_require__.d(exports, { ... })` calls
+   * to define export getters. When set to `false`, individual per-export
+   * `__webpack_require__.d(exports, name, getter)` calls are emitted instead,
+   * which avoids transient object allocation and `for...in` loops, improving
+   * runtime performance in V8 (fewer megamorphic call sites).
+   * @default true
+   */
+  batchDefinePropertyGetters?: boolean;
 };
 
 export type Output = {
