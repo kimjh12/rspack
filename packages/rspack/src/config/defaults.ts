@@ -664,6 +664,7 @@ const applyOutputDefaults = (
         | undefined),
   );
   F(environment, 'document', () => tp && optimistic(tp.document));
+  F(environment, 'batchDefinePropertyGetters', () => true);
 
   D(output, 'filename', output.module ? '[name].mjs' : '[name].js');
   F(output, 'iife', () => !output.module);

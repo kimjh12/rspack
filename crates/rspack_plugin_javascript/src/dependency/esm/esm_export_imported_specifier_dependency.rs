@@ -793,51 +793,86 @@ impl ESMExportImportedSpecifierDependency {
         let environment = compilation.options.output.environment;
         let supports_arrow_function = environment.supports_arrow_function();
         let supports_const = environment.supports_const();
-
-        let mut content = format!(
-          r"
-/* reexport */ var __rspack_reexport = {{}};
-/* reexport */ for( {} __rspack_import_key in {import_var}) ",
-          if supports_const { "const" } else { "var" }
-        );
-
-        if ignored.len() > 1 {
-          content += &format!(
-            "if({}.indexOf(__rspack_import_key) < 0) ",
-            serde_json::to_string(&ignored).expect("should serialize to array")
-          );
-        } else if let Some(item) = ignored.iter().next() {
-          content += &format!(
-            "if(__rspack_import_key !== {}) ",
-            rspack_util::json_stringify_str(item)
-          );
-        }
-        content += "__rspack_reexport[__rspack_import_key] =";
-
-        // Arrow getters capture the loop variable by reference.
-        // They are only correct when the loop binding is block-scoped (const/let), not var.
-        if supports_arrow_function && supports_const {
-          content += &format!("() => {import_var}[__rspack_import_key]");
-        } else {
-          content +=
-            &format!("function(key) {{ return {import_var}[key]; }}.bind(0, __rspack_import_key)");
-        }
+        let batch = environment.supports_batch_define_property_getters();
 
         let module = mg
           .module_by_identifier(&module.identifier())
           .expect("should have module graph module");
         let exports_name = module.get_exports_argument();
+        let define_property_getters =
+          runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS);
+        let exports_arg = runtime_template.render_exports_argument(exports_name);
+
+        let fragment_content = if batch {
+          let mut content = format!(
+            r"
+/* reexport */ var __rspack_reexport = {{}};
+/* reexport */ for( {} __rspack_import_key in {import_var}) ",
+            if supports_const { "const" } else { "var" }
+          );
+
+          if ignored.len() > 1 {
+            content += &format!(
+              "if({}.indexOf(__rspack_import_key) < 0) ",
+              serde_json::to_string(&ignored).expect("should serialize to array")
+            );
+          } else if let Some(item) = ignored.iter().next() {
+            content += &format!(
+              "if(__rspack_import_key !== {}) ",
+              rspack_util::json_stringify_str(item)
+            );
+          }
+          content += "__rspack_reexport[__rspack_import_key] =";
+
+          if supports_arrow_function && supports_const {
+            content += &format!("() => {import_var}[__rspack_import_key]");
+          } else {
+            content += &format!(
+              "function(key) {{ return {import_var}[key]; }}.bind(0, __rspack_import_key)"
+            );
+          }
+
+          format!(
+            r#"{content}
+/* reexport */ {define_property_getters}({exports_arg}, __rspack_reexport);
+"#,
+          )
+        } else {
+          let mut content = format!(
+            r"
+/* reexport */ for( {} __rspack_import_key in {import_var}) ",
+            if supports_const { "const" } else { "var" }
+          );
+
+          if ignored.len() > 1 {
+            content += &format!(
+              "if({}.indexOf(__rspack_import_key) < 0) ",
+              serde_json::to_string(&ignored).expect("should serialize to array")
+            );
+          } else if let Some(item) = ignored.iter().next() {
+            content += &format!(
+              "if(__rspack_import_key !== {}) ",
+              rspack_util::json_stringify_str(item)
+            );
+          }
+
+          let getter = if supports_arrow_function && supports_const {
+            format!("() => {import_var}[__rspack_import_key]")
+          } else {
+            format!("function(key) {{ return {import_var}[key]; }}.bind(0, __rspack_import_key)")
+          };
+
+          content +=
+            &format!("{define_property_getters}({exports_arg}, __rspack_import_key, {getter});\n");
+
+          content
+        };
+
         let is_async =
           ModuleGraph::is_async(&compilation.async_modules_artifact, &module.identifier());
         ctxt.init_fragments.push(
           NormalInitFragment::new(
-            format!(
-              r#"{content}
-/* reexport */ {}({}, __rspack_reexport);
-"#,
-              runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
-              runtime_template.render_exports_argument(exports_name),
-            ),
+            fragment_content,
             if is_async {
               InitFragmentStage::StageAsyncESMImports
             } else {
@@ -969,16 +1004,25 @@ impl ESMExportImportedSpecifierDependency {
     } = ctxt;
     let return_value = Self::get_return_value(name.clone(), value_key);
     let exports_name = module.get_exports_argument();
-    format!(
-      "if({}({}, {})) {}({}, {{ {}: function() {{ return {}; }} }});\n",
-      runtime_template.render_runtime_globals(&RuntimeGlobals::HAS_OWN_PROPERTY),
-      name,
-      rspack_util::json_stringify_str(&first_value_key),
-      runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
-      runtime_template.render_exports_argument(exports_name),
-      property_name(&key).expect("should have property_name"),
-      return_value
-    )
+    let has_own_property =
+      runtime_template.render_runtime_globals(&RuntimeGlobals::HAS_OWN_PROPERTY);
+    let define_property_getters =
+      runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS);
+    let exports_arg = runtime_template.render_exports_argument(exports_name);
+    let condition_key = rspack_util::json_stringify_str(&first_value_key);
+
+    if runtime_template.supports_batch_define_property_getters() {
+      let prop = property_name(&key).expect("should have property_name");
+      format!(
+        "if({has_own_property}({name}, {condition_key})) {define_property_getters}({exports_arg}, {{ {prop}: function() {{ return {return_value}; }} }});\n",
+      )
+    } else {
+      let quoted_key =
+        serde_json::to_string(key.as_ref()).expect("export name should be valid JSON string");
+      format!(
+        "if({has_own_property}({name}, {condition_key})) {define_property_getters}({exports_arg}, {quoted_key}, function() {{ return {return_value}; }});\n",
+      )
+    }
   }
 
   pub fn create_export_presence_mode(options: &JavascriptParserOptions) -> ExportPresenceMode {

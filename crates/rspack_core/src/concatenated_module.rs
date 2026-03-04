@@ -1479,12 +1479,29 @@ impl Module for ConcatenatedModule {
         }
 
         result.add(RawStringSource::from_static("\n// EXPORTS\n"));
-        result.add(RawStringSource::from(format!(
-          "{}({}, {{{}\n}});\n",
-          runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
-          runtime_template.render_exports_argument(exports_argument),
-          definitions.join(",")
-        )));
+        if runtime_template.supports_batch_define_property_getters() {
+          result.add(RawStringSource::from(format!(
+            "{}({}, {{{}\n}});\n",
+            runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
+            runtime_template.render_exports_argument(exports_argument),
+            definitions.join(",")
+          )));
+        } else {
+          let define_property_getters =
+            runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS);
+          let exports_arg = runtime_template.render_exports_argument(exports_argument);
+          for (key, value) in exports_map.iter() {
+            let quoted_name =
+              serde_json::to_string(key.as_ref()).expect("export name should be valid JSON string");
+            result.add(RawStringSource::from(format!(
+              "{}({}, {}, {});\n",
+              define_property_getters,
+              exports_arg,
+              quoted_name,
+              runtime_template.returning_function(value, "")
+            )));
+          }
+        }
       }
     }
 
@@ -1543,7 +1560,7 @@ impl Module for ConcatenatedModule {
           continue;
         }
 
-        let mut ns_obj = Vec::new();
+        let mut ns_obj: Vec<(Atom, String)> = Vec::new();
         let exports_info = compilation
           .exports_info_artifact
           .get_prefetched_exports_info(module_info_id, PrefetchExportsInfoMode::Default);
@@ -1571,22 +1588,40 @@ impl Module for ConcatenatedModule {
             );
             final_name.apply_to_info(&mut module_to_info_map, &mut needed_namespace_objects);
 
-            ns_obj.push(format!(
-              "\n  {}: {}",
-              property_name(&used_name).expect("should have property_name"),
-              runtime_template.returning_function(&final_name.name, "")
-            ));
+            ns_obj.push((used_name, final_name.name));
           }
         }
         // https://github.com/webpack/webpack/blob/ac7e531436b0d47cd88451f497cdfd0dad41535d/lib/optimize/ConcatenatedModule.js#L1539
         let name = name_space_name.expect("should have name_space_name");
         let define_getters = if !ns_obj.is_empty() {
-          format!(
-            "{}({}, {{ {} }});\n",
-            runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
-            name,
-            ns_obj.join(",")
-          )
+          let dpg =
+            runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS);
+          if runtime_template.supports_batch_define_property_getters() {
+            let props = ns_obj
+              .iter()
+              .map(|(used_name, final_name)| {
+                format!(
+                  "\n  {}: {}",
+                  property_name(used_name).expect("should have property_name"),
+                  runtime_template.returning_function(final_name, "")
+                )
+              })
+              .collect::<Vec<_>>()
+              .join(",");
+            format!("{dpg}({name}, {{ {props} }});\n")
+          } else {
+            ns_obj
+              .iter()
+              .map(|(used_name, final_name)| {
+                let quoted_name = serde_json::to_string(used_name.as_ref())
+                  .expect("export name should be valid JSON string");
+                format!(
+                  "{dpg}({name}, {quoted_name}, {});\n",
+                  runtime_template.returning_function(final_name, "")
+                )
+              })
+              .collect::<String>()
+          }
         } else {
           String::new()
         };

@@ -539,6 +539,7 @@ pub struct Environment {
   pub template_literal: bool,
   pub dynamic_import_in_worker: bool,
   pub import_meta_dirname_and_filename: bool,
+  pub batch_define_property_getters: bool,
 }
 
 impl Environment {
@@ -604,5 +605,9 @@ impl Environment {
 
   pub fn supports_template_literal(&self) -> bool {
     self.template_literal
+  }
+
+  pub fn supports_batch_define_property_getters(&self) -> bool {
+    self.batch_define_property_getters
   }
 }

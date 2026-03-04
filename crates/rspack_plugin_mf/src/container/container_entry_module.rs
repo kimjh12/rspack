@@ -311,22 +311,31 @@ impl Module for ContainerEntryModule {
         runtime_template.basic_function("mfInstance, bundlerRuntime", &init_body);
 
       // Generate the final source string
-      let source = format!(
-        r#"
+      let dpg = runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS);
+      let exports = runtime_template.render_exports_argument(ExportsArgument::Exports);
+      let source = if runtime_template.supports_batch_define_property_getters() {
+        format!(
+          r#"
           {require_name}.federation = {{ instance: undefined,bundlerRuntime: undefined }}
           var factory = ()=>{factory};
           var initShareContainer = {init_share_container_fn};
-    {runtime}({exports}, {{ 
+    {dpg}({exports}, {{ 
         get: function() {{ return factory;}},
         init: function() {{ return initShareContainer;}}
     }});
     "#,
-        require_name = require_name,
-        runtime = runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
-        exports = runtime_template.render_exports_argument(ExportsArgument::Exports),
-        factory = factory,
-        init_share_container_fn = init_share_container_fn
-      );
+        )
+      } else {
+        format!(
+          r#"
+          {require_name}.federation = {{ instance: undefined,bundlerRuntime: undefined }}
+          var factory = ()=>{factory};
+          var initShareContainer = {init_share_container_fn};
+    {dpg}({exports}, "get", function() {{ return factory;}});
+    {dpg}({exports}, "init", function() {{ return initShareContainer;}});
+    "#,
+        )
+      };
 
       // Update the code generation result with the generated source
       code_generation_result =
@@ -353,19 +362,66 @@ impl Module for ContainerEntryModule {
         "{}.initContainer",
         runtime_template.render_runtime_globals(&RuntimeGlobals::REQUIRE)
       );
+      let exports_arg = runtime_template.render_exports_argument(ExportsArgument::Exports);
 
-      format!(
-        r#"
+      if runtime_template.supports_batch_define_property_getters() {
+        format!(
+          r#"
 {}({}, {{
 	get: {},
 	init: {}
 }});"#,
-        define_property_getters,
-        runtime_template.render_exports_argument(ExportsArgument::Exports),
-        runtime_template.returning_function(&get_container, ""),
-        runtime_template.returning_function(&init_container, ""),
-      )
+          define_property_getters,
+          exports_arg,
+          runtime_template.returning_function(&get_container, ""),
+          runtime_template.returning_function(&init_container, ""),
+        )
+      } else {
+        format!(
+          r#"
+{dpg}({exports}, "get", {get_fn});
+{dpg}({exports}, "init", {init_fn});"#,
+          dpg = define_property_getters,
+          exports = exports_arg,
+          get_fn = runtime_template.returning_function(&get_container, ""),
+          init_fn = runtime_template.returning_function(&init_container, ""),
+        )
+      }
     } else {
+      let exports_arg = runtime_template.render_exports_argument(ExportsArgument::Exports);
+      let current_remote_get_scope =
+        runtime_template.render_runtime_globals(&RuntimeGlobals::CURRENT_REMOTE_GET_SCOPE);
+      let has_own_property =
+        runtime_template.render_runtime_globals(&RuntimeGlobals::HAS_OWN_PROPERTY);
+      let share_scope_map =
+        runtime_template.render_runtime_globals(&RuntimeGlobals::SHARE_SCOPE_MAP);
+      let share_scope = json_stringify_str(&self.share_scope);
+      let initialize_sharing =
+        runtime_template.render_runtime_globals(&RuntimeGlobals::INITIALIZE_SHARING);
+      let define_property_getters =
+        runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS);
+      let get_scope_reject = runtime_template.basic_function(
+        "",
+        r#"throw new Error('Module "' + module + '" does not exist in container.');"#,
+      );
+      let export_get = runtime_template.returning_function("get", "");
+      let export_init = runtime_template.returning_function("init", "");
+      let batch = runtime_template.supports_batch_define_property_getters();
+
+      let define_exports = if batch {
+        format!(
+          r#"{define_property_getters}({exports_arg}, {{
+	get: {export_get},
+	init: {export_init}
+}});"#
+        )
+      } else {
+        format!(
+          r#"{define_property_getters}({exports_arg}, "get", {export_get});
+{define_property_getters}({exports_arg}, "init", {export_init});"#
+        )
+      };
+
       format!(
         r#"
 var moduleMap = {module_map_str};
@@ -387,27 +443,7 @@ var init = function(shareScope, initScope) {{
   {share_scope_map}[name] = shareScope;
   return {initialize_sharing}(name, initScope);
 }}
-{define_property_getters}({exports}, {{
-	get: {export_get},
-	init: {export_init}
-}});"#,
-        exports = runtime_template.render_exports_argument(ExportsArgument::Exports),
-        current_remote_get_scope =
-          runtime_template.render_runtime_globals(&RuntimeGlobals::CURRENT_REMOTE_GET_SCOPE),
-        has_own_property =
-          runtime_template.render_runtime_globals(&RuntimeGlobals::HAS_OWN_PROPERTY),
-        share_scope_map = runtime_template.render_runtime_globals(&RuntimeGlobals::SHARE_SCOPE_MAP),
-        share_scope = json_stringify_str(&self.share_scope),
-        initialize_sharing =
-          runtime_template.render_runtime_globals(&RuntimeGlobals::INITIALIZE_SHARING),
-        define_property_getters =
-          runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
-        get_scope_reject = runtime_template.basic_function(
-          "",
-          r#"throw new Error('Module "' + module + '" does not exist in container.');"#
-        ),
-        export_get = runtime_template.returning_function("get", ""),
-        export_init = runtime_template.returning_function("init", ""),
+{define_exports}"#,
       )
     };
     code_generation_result =

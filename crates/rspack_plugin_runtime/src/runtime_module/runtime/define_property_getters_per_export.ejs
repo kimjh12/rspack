@@ -1,0 +1,5 @@
+<%- DEFINE_PROPERTY_GETTERS %> = <%- basicFunction("exports, name, getter") %> {
+	if(!<%- HAS_OWN_PROPERTY %>(exports, name)) {
+		Object.defineProperty(exports, name, { enumerable: true, get: getter });
+	}
+};

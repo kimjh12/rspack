@@ -190,6 +190,14 @@ impl RuntimeTemplate {
       self.dojang.as_ref().expect("dojang should be initialized"),
     )
   }
+
+  pub fn supports_batch_define_property_getters(&self) -> bool {
+    self
+      .compiler_options
+      .output
+      .environment
+      .supports_batch_define_property_getters()
+  }
 }
 
 fn to_string(val: &Operand, runtime_globals: &Map<String, Value>) -> String {
@@ -525,6 +533,14 @@ impl ModuleCodeTemplate {
 
   pub fn render_runtime_globals_without_adding(&self, runtime_globals: &RuntimeGlobals) -> String {
     runtime_globals_to_string(runtime_globals, &self.compiler_options)
+  }
+
+  pub fn supports_batch_define_property_getters(&self) -> bool {
+    self
+      .compiler_options
+      .output
+      .environment
+      .supports_batch_define_property_getters()
   }
 
   pub fn define_es_module_flag_statement(&mut self, exports_argument: ExportsArgument) -> String {

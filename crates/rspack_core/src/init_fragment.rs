@@ -352,35 +352,56 @@ impl ESMExportInitFragment {
 impl<C: InitFragmentRenderContext> InitFragment<C> for ESMExportInitFragment {
   fn contents(mut self: Box<Self>, context: &mut C) -> Result<InitFragmentContents> {
     let runtime_template = context.runtime_template();
+    let batch = runtime_template.supports_batch_define_property_getters();
 
     self.export_map.sort_by(|a, b| a.0.cmp(&b.0));
-    let exports = format!(
-      "{{\n  {}\n}}",
-      self
-        .export_map
-        .iter()
-        .map(|s| {
-          let prop = property_name(&s.0)?;
-          Ok(format!(
-            "{}: {}",
-            prop,
-            runtime_template.returning_function(&s.1, "")
-          ))
-        })
-        .collect::<Result<Vec<_>>>()?
-        .join(",\n  ")
-    );
 
-    let res = InitFragmentContents {
-      start: format!(
+    let start = if batch {
+      let exports = format!(
+        "{{\n  {}\n}}",
+        self
+          .export_map
+          .iter()
+          .map(|s| {
+            let prop = property_name(&s.0)?;
+            Ok(format!(
+              "{}: {}",
+              prop,
+              runtime_template.returning_function(&s.1, "")
+            ))
+          })
+          .collect::<Result<Vec<_>>>()?
+          .join(",\n  ")
+      );
+      format!(
         "{}({}, {});\n",
         runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
         runtime_template.render_exports_argument(self.exports_argument),
         exports
-      ),
-      end: None,
+      )
+    } else {
+      let define_property_getters =
+        runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS);
+      let exports_arg = runtime_template.render_exports_argument(self.exports_argument);
+      self
+        .export_map
+        .iter()
+        .map(|s| {
+          let quoted_name =
+            serde_json::to_string(s.0.as_ref()).expect("export name should be valid JSON string");
+          Ok(format!(
+            "{}({}, {}, {});\n",
+            define_property_getters,
+            exports_arg,
+            quoted_name,
+            runtime_template.returning_function(&s.1, "")
+          ))
+        })
+        .collect::<Result<Vec<_>>>()?
+        .join("")
     };
-    Ok(res)
+
+    Ok(InitFragmentContents { start, end: None })
   }
 
   fn stage(&self) -> InitFragmentStage {

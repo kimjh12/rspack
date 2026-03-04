@@ -373,7 +373,15 @@ async fn runtime_requirements_in_tree(
       RuntimeGlobals::DEFINE_PROPERTY_GETTERS => {
         runtime_modules_to_add.push((
           *chunk_ukey,
-          DefinePropertyGettersRuntimeModule::new(&compilation.runtime_template).boxed(),
+          DefinePropertyGettersRuntimeModule::new(
+            &compilation.runtime_template,
+            compilation
+              .options
+              .output
+              .environment
+              .supports_batch_define_property_getters(),
+          )
+          .boxed(),
         ));
       }
       RuntimeGlobals::GET_TRUSTED_TYPES_POLICY => {
@@ -385,7 +393,15 @@ async fn runtime_requirements_in_tree(
       RuntimeGlobals::CREATE_FAKE_NAMESPACE_OBJECT => {
         runtime_modules_to_add.push((
           *chunk_ukey,
-          CreateFakeNamespaceObjectRuntimeModule::new(&compilation.runtime_template).boxed(),
+          CreateFakeNamespaceObjectRuntimeModule::new(
+            &compilation.runtime_template,
+            compilation
+              .options
+              .output
+              .environment
+              .supports_batch_define_property_getters(),
+          )
+          .boxed(),
         ));
       }
       RuntimeGlobals::MAKE_NAMESPACE_OBJECT => {
@@ -397,7 +413,15 @@ async fn runtime_requirements_in_tree(
       RuntimeGlobals::COMPAT_GET_DEFAULT_EXPORT => {
         runtime_modules_to_add.push((
           *chunk_ukey,
-          CompatGetDefaultExportRuntimeModule::new(&compilation.runtime_template).boxed(),
+          CompatGetDefaultExportRuntimeModule::new(
+            &compilation.runtime_template,
+            compilation
+              .options
+              .output
+              .environment
+              .supports_batch_define_property_getters(),
+          )
+          .boxed(),
         ));
       }
       RuntimeGlobals::ESM_MODULE_DECORATOR => {

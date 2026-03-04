@@ -369,7 +369,7 @@ impl EsmLibraryPlugin {
             continue;
           }
 
-          let mut ns_obj = Vec::new();
+          let mut ns_obj: Vec<(Atom, String)> = Vec::new();
           for export_info in compilation
             .exports_info_artifact
             .get_exports_info_data(module_info_id)
@@ -434,22 +434,39 @@ impl EsmLibraryPlugin {
                 }
               }
 
-              ns_obj.push(format!(
-                "\n  {}: {}",
-                property_name(&used_name).expect("should have property_name"),
-                runtime_template.returning_function(&binding.render(), "")
-              ));
+              ns_obj.push((used_name, binding.render().to_string()));
             }
           }
           // https://github.com/webpack/webpack/blob/ac7e531436b0d47cd88451f497cdfd0dad41535d/lib/optimize/ConcatenatedModule.js#L1539
           let name = namespace_name.expect("should have name_space_name");
           let define_getters = if !ns_obj.is_empty() {
-            format!(
-              "{}({}, {{ {} }});\n",
-              runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS),
-              name,
-              ns_obj.join(",")
-            )
+            let dpg =
+              runtime_template.render_runtime_globals(&RuntimeGlobals::DEFINE_PROPERTY_GETTERS);
+            if runtime_template.supports_batch_define_property_getters() {
+              let props = ns_obj
+                .iter()
+                .map(|(used_name, final_name)| {
+                  format!(
+                    "\n  {}: {}",
+                    property_name(used_name).expect("should have property_name"),
+                    runtime_template.returning_function(final_name, "")
+                  )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+              format!("{dpg}({name}, {{ {props} }});\n")
+            } else {
+              ns_obj
+                .iter()
+                .map(|(used_name, final_name)| {
+                  let quoted_name = rspack_util::json_stringify_str(used_name.as_ref());
+                  format!(
+                    "{dpg}({name}, {quoted_name}, {});\n",
+                    runtime_template.returning_function(final_name, "")
+                  )
+                })
+                .collect::<String>()
+            }
           } else {
             String::new()
           };

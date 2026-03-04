@@ -139,6 +139,9 @@ function getRawOutputEnvironment(
     importMetaDirnameAndFilename: Boolean(
       environment.importMetaDirnameAndFilename,
     ),
+    batchDefinePropertyGetters: Boolean(
+      environment.batchDefinePropertyGetters,
+    ),
   };
 }
 
